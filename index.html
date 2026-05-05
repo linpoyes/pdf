@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF 拆分工坊</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+:root {
+  --paper:    #f6f4ee;
+  --ink:      #1a1815;
+  --ink-soft: #4a463f;
+  --muted:    #8e8a80;
+  --line:     #d8d4ca;
+  --line-2:   #a8a497;
+  --accent:   #c8412a;
+  --white:    #ffffff;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Noto Sans TC', -apple-system, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  min-height: 100vh;
+  padding: 64px 24px 80px;
+  -webkit-font-smoothing: antialiased;
+  font-weight: 400;
+}
+
+.container {
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+/* ─── Header ─── */
+header {
+  margin-bottom: 64px;
+}
+.eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: .2em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 16px;
+}
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.logo-mark {
+  width: 64px;
+  height: 68px;
+  flex-shrink: 0;
+  color: var(--ink);
+}
+.logo-text { display: flex; flex-direction: column; }
+.logo-tag {
+  margin-top: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: .35em;
+  color: var(--muted);
+  text-transform: uppercase;
+  padding-left: 2px;
+}
+
+h1 {
+  font-family: 'Noto Sans TC', sans-serif;
+  font-weight: 900;
+  font-size: clamp(40px, 7vw, 64px);
+  line-height: 1;
+  letter-spacing: -.025em;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+}
+h1 .t-latin {
+  font-family: 'Noto Sans TC', sans-serif;
+  font-weight: 900;
+}
+h1 .t-slash {
+  color: var(--accent);
+  font-weight: 300;
+  font-size: 1.15em;
+  margin: 0 .12em;
+  display: inline-block;
+  transform: skewX(-18deg) translateY(-0.04em);
+  font-family: 'Noto Sans TC', serif;
+}
+h1 .t-zh {
+  letter-spacing: .06em;
+  padding-right: .06em;
+}
+.lead {
+  margin-top: 14px;
+  font-size: 14px;
+  color: var(--ink-soft);
+  letter-spacing: .02em;
+}
+
+/* ─── Error ─── */
+#error-msg {
+  display: none;
+  background: var(--accent);
+  color: white;
+  padding: 14px 20px;
+  font-size: 14px;
+  margin-bottom: 24px;
+  border-radius: 2px;
+}
+#error-msg.visible { display: block; }
+
+/* ─── Drop zone ─── */
+.drop-zone {
+  border: 1.5px dashed var(--line-2);
+  padding: 80px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: all .25s cubic-bezier(.2,.8,.2,1);
+  background: transparent;
+  border-radius: 4px;
+}
+.drop-zone:hover, .drop-zone.dragover {
+  border-color: var(--accent);
+  background: var(--white);
+  transform: translateY(-2px);
+}
+.drop-zone-icon {
+  width: 48px; height: 48px;
+  margin: 0 auto 24px;
+  color: var(--ink-soft);
+  transition: color .25s;
+}
+.drop-zone:hover .drop-zone-icon { color: var(--accent); }
+.drop-zone-title {
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: -.01em;
+  margin-bottom: 8px;
+}
+.drop-zone-hint {
+  font-size: 13px;
+  color: var(--muted);
+}
+.drop-zone-hint code {
+  font-family: 'JetBrains Mono', monospace;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 2px 8px;
+  font-size: 12px;
+  margin: 0 4px;
+  color: var(--ink);
+  border-radius: 2px;
+}
+#file-input { display: none; }
+
+/* ─── Workspace ─── */
+.workspace { display: none; }
+.workspace.active {
+  display: block;
+  animation: fadeUp .35s cubic-bezier(.2,.8,.2,1);
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── File info bar ─── */
+.file-info {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  padding: 14px 0;
+  margin-bottom: 48px;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--line);
+}
+.file-info .name {
+  font-weight: 500;
+  font-size: 15px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-info .stats {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: .03em;
+  white-space: nowrap;
+}
+.file-info .stats span + span::before { content: ' · '; }
+.btn-reset {
+  background: transparent;
+  border: none;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  letter-spacing: .05em;
+  padding: 4px 8px;
+  border-radius: 2px;
+  transition: all .15s;
+}
+.btn-reset:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* ─── Section ─── */
+.section { margin-bottom: 44px; }
+.section-label {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.section-label .num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--accent);
+  letter-spacing: .1em;
+  font-weight: 500;
+}
+.section-label .name {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+.section-label .meta {
+  margin-left: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Side-by-side controls */
+.controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 36px;
+  margin-bottom: 44px;
+}
+@media (max-width: 640px) { .controls { grid-template-columns: 1fr; gap: 32px; } }
+
+/* ─── Format options ─── */
+.format-options {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.format-option { position: relative; }
+.format-option input { position: absolute; opacity: 0; pointer-events: none; }
+.format-option label {
+  display: block;
+  padding: 16px 8px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  text-align: center;
+  transition: all .15s;
+  border-radius: 2px;
+}
+.format-option label:hover { border-color: var(--ink-soft); }
+.format-option input:checked + label {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+.format-option .label-main {
+  display: block;
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: .02em;
+}
+.format-option .label-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.format-option input:checked + label .label-sub { color: rgba(246,244,238,.65); }
+
+/* Quality */
+.quality-row { margin-top: 16px; display: none; }
+.quality-row.visible { display: block; }
+.quality-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.quality-segments {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.quality-segments button {
+  padding: 9px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  font-family: 'Noto Sans TC', sans-serif;
+  font-size: 13px;
+  color: var(--ink-soft);
+  transition: all .15s;
+  border-radius: 2px;
+}
+.quality-segments button:hover { border-color: var(--ink-soft); color: var(--ink); }
+.quality-segments button.active {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+
+/* ─── Range ─── */
+.range-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.range-mode {
+  padding: 16px 8px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--ink);
+  transition: all .15s;
+  border-radius: 2px;
+}
+.range-mode:hover { border-color: var(--ink-soft); }
+.range-mode.active {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+#range-input {
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  color: var(--ink);
+  display: none;
+  border-radius: 2px;
+  margin-bottom: 8px;
+}
+#range-input.visible { display: block; }
+#range-input:focus { outline: none; border-color: var(--accent); }
+.range-hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ─── Thumbnails ─── */
+.thumbnails-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 12px;
+}
+.thumbnail {
+  cursor: pointer;
+  position: relative;
+  transition: transform .15s, opacity .15s;
+  user-select: none;
+}
+.thumbnail:hover { transform: translateY(-2px); }
+.thumbnail.deselected { opacity: .25; }
+.thumbnail canvas, .thumbnail .placeholder {
+  width: 100%;
+  display: block;
+  background: var(--white);
+  aspect-ratio: 1/1.414;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+}
+.thumbnail .placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+.thumbnail .pn {
+  margin-top: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  letter-spacing: .05em;
+}
+.thumbnail:hover .pn { color: var(--ink); }
+
+/* ─── Execute ─── */
+.execute-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 24px;
+  align-items: center;
+  padding-top: 28px;
+  border-top: 1px solid var(--ink);
+}
+@media (max-width: 600px) { .execute-row { grid-template-columns: 1fr; } }
+
+.execute-summary {
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.execute-summary strong { color: var(--accent); font-weight: 900; font-size: 18px; }
+.execute-summary .hint {
+  display: block;
+  margin-top: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: .05em;
+}
+
+.btn-execute {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 16px 36px;
+  font-family: 'Noto Sans TC', sans-serif;
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: .05em;
+  cursor: pointer;
+  transition: all .2s;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.btn-execute:hover:not(:disabled) {
+  background: var(--ink);
+  transform: translateY(-1px);
+}
+.btn-execute:disabled { opacity: .35; cursor: not-allowed; }
+.btn-execute::after {
+  content: ' →';
+  display: inline-block;
+  margin-left: 4px;
+  transition: transform .2s;
+}
+.btn-execute:hover:not(:disabled)::after { transform: translateX(4px); }
+
+/* ─── Progress overlay ─── */
+.progress-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(26,24,21,.7);
+  backdrop-filter: blur(6px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.progress-overlay.active { display: flex; }
+.progress-card {
+  background: var(--paper);
+  padding: 40px 36px;
+  width: 90%;
+  max-width: 380px;
+  text-align: center;
+  border-radius: 4px;
+}
+.progress-title {
+  font-weight: 700;
+  font-size: 20px;
+  margin-bottom: 6px;
+}
+.progress-status {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 24px;
+  min-height: 14px;
+}
+.progress-bar {
+  width: 100%;
+  height: 3px;
+  background: var(--line);
+  margin-bottom: 12px;
+  overflow: hidden;
+  border-radius: 2px;
+}
+.progress-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  width: 0%;
+  transition: width .25s;
+}
+.progress-percent {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+/* ─── Footer ─── */
+footer {
+  margin-top: 80px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: .05em;
+  text-align: center;
+}
+
+::selection { background: var(--accent); color: white; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="logo">
+      <svg class="logo-mark" viewBox="0 0 56 60" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="PDF 拆分">
+        <!-- top half of page -->
+        <rect x="3" y="4" width="40" height="22" stroke="currentColor" stroke-width="2.5"/>
+        <!-- inner content lines on top half -->
+        <line x1="9" y1="12" x2="29" y2="12" stroke="currentColor" stroke-width="1.5" opacity=".55"/>
+        <line x1="9" y1="18" x2="25" y2="18" stroke="currentColor" stroke-width="1.5" opacity=".55"/>
+        <!-- red cut line -->
+        <line x1="0" y1="30" x2="56" y2="30" stroke="#c8412a" stroke-width="2.5"/>
+        <!-- bottom half, offset right -->
+        <rect x="13" y="34" width="40" height="22" stroke="currentColor" stroke-width="2.5"/>
+        <!-- inner lines on bottom half -->
+        <line x1="19" y1="42" x2="39" y2="42" stroke="currentColor" stroke-width="1.5" opacity=".55"/>
+        <line x1="19" y1="48" x2="35" y2="48" stroke="currentColor" stroke-width="1.5" opacity=".55"/>
+      </svg>
+      <div class="logo-text">
+        <h1><span class="t-latin">PDF</span><span class="t-slash">/</span><span class="t-zh">拆分</span></h1>
+        <div class="logo-tag">DOCUMENT · SPLITTER</div>
+      </div>
+    </div>
+  </header>
+
+  <div id="error-msg"></div>
+
+  <!-- Drop zone -->
+  <section id="drop-frame">
+    <div class="drop-zone" id="drop-zone" tabindex="0" role="button" aria-label="選擇 PDF 檔案">
+      <svg class="drop-zone-icon" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+        <path d="M14 8 h26 l10 10 v38 a2 2 0 0 1 -2 2 h-34 a2 2 0 0 1 -2 -2 v-46 a2 2 0 0 1 2 -2 z"/>
+        <path d="M40 8 v10 h10"/>
+        <path d="M22 30 h20 M22 38 h20 M22 46 h12"/>
+      </svg>
+      <div class="drop-zone-hint">PDF 到此處 或<code>點擊選擇</code></div>
+      <input type="file" id="file-input" accept=".pdf,application/pdf">
+    </div>
+  </section>
+
+  <!-- Workspace -->
+  <div id="workspace" class="workspace">
+
+    <div class="file-info">
+      <div class="name" id="file-name"></div>
+      <div class="stats">
+        <span id="page-count"></span>
+        <span id="file-size"></span>
+      </div>
+      <button class="btn-reset" id="btn-reset">回主頁</button>
+    </div>
+
+    <div class="controls">
+      <div class="section" style="margin-bottom: 0;">
+        <div class="section-label">
+          <span class="num">01</span>
+          <span class="name">輸出格式</span>
+        </div>
+        <div class="format-options">
+          <div class="format-option">
+            <input type="radio" name="format" id="fmt-jpg" value="jpg" checked>
+            <label for="fmt-jpg">
+              <span class="label-main">JPG</span>
+              <span class="label-sub">每頁一張圖</span>
+            </label>
+          </div>
+          <div class="format-option">
+            <input type="radio" name="format" id="fmt-pdf" value="pdf">
+            <label for="fmt-pdf">
+              <span class="label-main">PDF</span>
+              <span class="label-sub">每頁一檔</span>
+            </label>
+          </div>
+          <div class="format-option">
+            <input type="radio" name="format" id="fmt-both" value="both">
+            <label for="fmt-both">
+              <span class="label-main">兩種</span>
+              <span class="label-sub">JPG + PDF</span>
+            </label>
+          </div>
+        </div>
+
+        <div id="quality-row" class="quality-row visible">
+          <div class="quality-label">JPG 品質</div>
+          <div class="quality-segments">
+            <button data-scale="1.5">標準</button>
+            <button data-scale="2.5" class="active">高品質</button>
+            <button data-scale="4">列印級</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="section" style="margin-bottom: 0;">
+        <div class="section-label">
+          <span class="num">02</span>
+          <span class="name">頁面範圍</span>
+        </div>
+        <div class="range-options">
+          <button class="range-mode active" data-mode="all">全部頁面</button>
+          <button class="range-mode" data-mode="custom">自訂範圍</button>
+        </div>
+        <input type="text" id="range-input" placeholder="例如：1-5, 8, 10-12">
+        <div class="range-hint">逗號分隔頁碼，連字號表示連續範圍。也可直接點擊下方縮圖切換。</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-label">
+        <span class="num">03</span>
+        <span class="name">頁面預覽</span>
+        <span class="meta" id="selected-count"></span>
+      </div>
+      <div class="thumbnails-grid" id="thumbnails"></div>
+    </div>
+
+    <div class="execute-row">
+      <div class="execute-summary" id="summary"></div>
+      <button class="btn-execute" id="btn-process">開始拆分</button>
+    </div>
+
+  </div>
+
+  <footer>本機處理 · 檔案不上傳</footer>
+</div>
+
+<div class="progress-overlay" id="progress-overlay">
+  <div class="progress-card">
+    <div class="progress-title">處理中</div>
+    <div class="progress-status" id="progress-status">準備中...</div>
+    <div class="progress-bar"><div class="progress-bar-fill" id="progress-bar"></div></div>
+    <div class="progress-percent" id="progress-percent">0%</div>
+  </div>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const $ = id => document.getElementById(id);
+
+let state = {
+  file: null,
+  arrayBuffer: null,
+  pdfJsDoc: null,
+  pageCount: 0,
+  format: 'jpg',
+  jpgScale: 2.5,
+  rangeMode: 'all',
+  selectedPages: [],
+};
+
+function showError(msg) {
+  const el = $('error-msg');
+  el.textContent = msg;
+  el.classList.add('visible');
+  clearTimeout(showError._t);
+  showError._t = setTimeout(() => el.classList.remove('visible'), 5000);
+}
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
+const dropZone = $('drop-zone');
+const fileInput = $('file-input');
+const workspace = $('workspace');
+const dropFrame = $('drop-frame');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+});
+fileInput.addEventListener('change', e => e.target.files[0] && handleFile(e.target.files[0]));
+
+['dragenter', 'dragover'].forEach(ev =>
+  dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.add('dragover'); }));
+['dragleave', 'drop'].forEach(ev =>
+  dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.remove('dragover'); }));
+dropZone.addEventListener('drop', e => {
+  const f = e.dataTransfer.files[0];
+  if (f) handleFile(f);
+});
+
+async function handleFile(file) {
+  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+    showError('請上傳 PDF 檔案'); return;
+  }
+  state.file = file;
+  state.arrayBuffer = await file.arrayBuffer();
+  try {
+    state.pdfJsDoc = await pdfjsLib.getDocument({ data: state.arrayBuffer.slice(0) }).promise;
+    state.pageCount = state.pdfJsDoc.numPages;
+    state.selectedPages = Array.from({ length: state.pageCount }, (_, i) => i + 1);
+
+    $('file-name').textContent = file.name;
+    $('page-count').textContent = state.pageCount + ' 頁';
+    $('file-size').textContent = formatSize(file.size);
+
+    dropFrame.style.display = 'none';
+    workspace.classList.add('active');
+
+    renderThumbnails();
+    updateSummary();
+  } catch (err) {
+    showError('無法讀取此 PDF：' + (err.message || err));
+  }
+}
+
+$('btn-reset').addEventListener('click', () => {
+  state = {
+    file: null, arrayBuffer: null, pdfJsDoc: null, pageCount: 0,
+    format: 'jpg', jpgScale: 2.5, rangeMode: 'all', selectedPages: []
+  };
+  fileInput.value = '';
+  dropFrame.style.display = 'block';
+  workspace.classList.remove('active');
+  $('thumbnails').innerHTML = '';
+  $('fmt-jpg').checked = true;
+  $('quality-row').classList.add('visible');
+  document.querySelectorAll('.quality-segments button').forEach((b, i) =>
+    b.classList.toggle('active', i === 1));
+  document.querySelectorAll('.range-mode').forEach((b, i) =>
+    b.classList.toggle('active', i === 0));
+  $('range-input').classList.remove('visible');
+  $('range-input').value = '';
+});
+
+document.querySelectorAll('input[name="format"]').forEach(input => {
+  input.addEventListener('change', e => {
+    state.format = e.target.value;
+    $('quality-row').classList.toggle('visible', state.format !== 'pdf');
+    updateSummary();
+  });
+});
+
+document.querySelectorAll('.quality-segments button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.quality-segments button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.jpgScale = parseFloat(btn.dataset.scale);
+  });
+});
+
+document.querySelectorAll('.range-mode').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.range-mode').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.rangeMode = btn.dataset.mode;
+    $('range-input').classList.toggle('visible', state.rangeMode === 'custom');
+    if (state.rangeMode === 'all') {
+      state.selectedPages = Array.from({ length: state.pageCount }, (_, i) => i + 1);
+      $('range-input').value = '';
+    } else if (!$('range-input').value) {
+      $('range-input').value = formatRange(state.selectedPages);
+    }
+    refreshThumbSelection();
+    updateSummary();
+  });
+});
+
+$('range-input').addEventListener('input', e => {
+  state.selectedPages = parseRange(e.target.value, state.pageCount);
+  refreshThumbSelection();
+  updateSummary();
+});
+
+function parseRange(str, max) {
+  if (!str.trim()) return [];
+  const result = new Set();
+  str.split(',').forEach(part => {
+    part = part.trim();
+    if (!part) return;
+    if (part.includes('-')) {
+      const [a, b] = part.split('-').map(s => parseInt(s.trim(), 10));
+      if (!isNaN(a) && !isNaN(b)) {
+        for (let i = Math.min(a, b); i <= Math.max(a, b); i++) {
+          if (i >= 1 && i <= max) result.add(i);
+        }
+      }
+    } else {
+      const n = parseInt(part, 10);
+      if (!isNaN(n) && n >= 1 && n <= max) result.add(n);
+    }
+  });
+  return Array.from(result).sort((a, b) => a - b);
+}
+function formatRange(pages) {
+  if (!pages.length) return '';
+  const groups = [];
+  let start = pages[0], prev = pages[0];
+  for (let i = 1; i < pages.length; i++) {
+    if (pages[i] === prev + 1) { prev = pages[i]; continue; }
+    groups.push(start === prev ? '' + start : start + '-' + prev);
+    start = prev = pages[i];
+  }
+  groups.push(start === prev ? '' + start : start + '-' + prev);
+  return groups.join(', ');
+}
+
+async function renderThumbnails() {
+  const grid = $('thumbnails');
+  grid.innerHTML = '';
+  for (let i = 1; i <= state.pageCount; i++) {
+    const div = document.createElement('div');
+    div.className = 'thumbnail';
+    div.dataset.page = i;
+    div.innerHTML = '<div class="placeholder">' + i + '</div><div class="pn">' + String(i).padStart(2, '0') + '</div>';
+    div.addEventListener('click', () => togglePage(i));
+    grid.appendChild(div);
+  }
+  for (let i = 1; i <= state.pageCount; i++) {
+    try {
+      const page = await state.pdfJsDoc.getPage(i);
+      const viewport = page.getViewport({ scale: 0.4 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      const div = grid.querySelector('[data-page="' + i + '"]');
+      if (div) {
+        const ph = div.querySelector('.placeholder');
+        if (ph) ph.replaceWith(canvas);
+      }
+    } catch (err) { /* skip */ }
+  }
+}
+
+function togglePage(p) {
+  if (state.rangeMode === 'all') {
+    state.rangeMode = 'custom';
+    document.querySelectorAll('.range-mode').forEach(b =>
+      b.classList.toggle('active', b.dataset.mode === 'custom'));
+    $('range-input').classList.add('visible');
+  }
+  if (state.selectedPages.includes(p)) {
+    state.selectedPages = state.selectedPages.filter(n => n !== p);
+  } else {
+    state.selectedPages = [...state.selectedPages, p].sort((a, b) => a - b);
+  }
+  $('range-input').value = formatRange(state.selectedPages);
+  refreshThumbSelection();
+  updateSummary();
+}
+
+function refreshThumbSelection() {
+  const set = new Set(state.selectedPages);
+  document.querySelectorAll('.thumbnail').forEach(div => {
+    const p = parseInt(div.dataset.page, 10);
+    div.classList.toggle('deselected', !set.has(p));
+  });
+}
+
+function updateSummary() {
+  const n = state.selectedPages.length;
+  $('selected-count').textContent = '已選 ' + n + ' / ' + state.pageCount;
+  let formatText = '';
+  if (state.format === 'jpg') formatText = n + ' 張 JPG';
+  else if (state.format === 'pdf') formatText = n + ' 個 PDF';
+  else formatText = n + ' 張 JPG ＋ ' + n + ' 個 PDF';
+  $('summary').innerHTML = '將輸出 <strong>' + formatText + '</strong><span class="hint">打包為 .zip 自動下載</span>';
+  $('btn-process').disabled = n === 0;
+}
+
+$('btn-process').addEventListener('click', processSplit);
+
+async function processSplit() {
+  if (state.selectedPages.length === 0) return;
+  const overlay = $('progress-overlay');
+  const status = $('progress-status');
+  const bar = $('progress-bar');
+  const pct = $('progress-percent');
+  overlay.classList.add('active');
+  bar.style.width = '0%'; pct.textContent = '0%';
+
+  try {
+    const zip = new JSZip();
+    const pages = state.selectedPages;
+    const total = pages.length * (state.format === 'both' ? 2 : 1);
+    let done = 0;
+    const baseName = state.file.name.replace(/\.pdf$/i, '');
+
+    if (state.format === 'jpg' || state.format === 'both') {
+      for (const p of pages) {
+        status.textContent = '匯出 JPG · 第 ' + p + ' 頁';
+        const page = await state.pdfJsDoc.getPage(p);
+        const viewport = page.getViewport({ scale: state.jpgScale });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width; canvas.height = viewport.height;
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.92));
+        const folder = state.format === 'both' ? zip.folder('jpg') : zip;
+        folder.file(baseName + '_p' + String(p).padStart(3, '0') + '.jpg', blob);
+        done++;
+        const percent = Math.round(done / total * 100);
+        bar.style.width = percent + '%'; pct.textContent = percent + '%';
+      }
+    }
+
+    if (state.format === 'pdf' || state.format === 'both') {
+      const sourcePdf = await PDFLib.PDFDocument.load(state.arrayBuffer.slice(0));
+      for (const p of pages) {
+        status.textContent = '匯出 PDF · 第 ' + p + ' 頁';
+        const newPdf = await PDFLib.PDFDocument.create();
+        const [copied] = await newPdf.copyPages(sourcePdf, [p - 1]);
+        newPdf.addPage(copied);
+        const bytes = await newPdf.save();
+        const folder = state.format === 'both' ? zip.folder('pdf') : zip;
+        folder.file(baseName + '_p' + String(p).padStart(3, '0') + '.pdf', bytes);
+        done++;
+        const percent = Math.round(done / total * 100);
+        bar.style.width = percent + '%'; pct.textContent = percent + '%';
+      }
+    }
+
+    status.textContent = '打包 ZIP 中...';
+    const blob = await zip.generateAsync({ type: 'blob' }, meta => {
+      pct.textContent = Math.round(meta.percent) + '%';
+    });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = baseName + '_split.zip';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    status.textContent = '完成！檔案開始下載';
+    bar.style.width = '100%'; pct.textContent = '100%';
+    setTimeout(() => overlay.classList.remove('active'), 900);
+  } catch (err) {
+    overlay.classList.remove('active');
+    showError('處理失敗：' + (err.message || err));
+  }
+}
+</script>
+</body>
+</html>
