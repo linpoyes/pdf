@@ -371,6 +371,20 @@ h1 .t-zh {
   line-height: 1.5;
 }
 
+#watermark-input {
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  font-family: 'Noto Sans TC', sans-serif;
+  font-size: 14px;
+  color: var(--ink);
+  border-radius: 2px;
+  margin-bottom: 8px;
+}
+#watermark-input:focus { outline: none; border-color: var(--accent); }
+.watermark-section { margin-bottom: 44px; }
+
 /* ─── Thumbnails ─── */
 .thumbnails-grid {
   display: grid;
@@ -639,9 +653,19 @@ footer {
       </div>
     </div>
 
-    <div class="section">
+    <div class="section watermark-section">
       <div class="section-label">
         <span class="num">03</span>
+        <span class="name">浮水印</span>
+        <span class="meta">選填</span>
+      </div>
+      <input type="text" id="watermark-input" placeholder="留空則不加浮水印 · 例如：機密、DRAFT、姓名">
+      <div class="range-hint">輸入的文字會以半透明斜向覆蓋每一頁，JPG 與 PDF 都會套用。</div>
+    </div>
+
+    <div class="section">
+      <div class="section-label">
+        <span class="num">04</span>
         <span class="name">頁面預覽</span>
         <span class="meta" id="selected-count"></span>
       </div>
@@ -759,6 +783,7 @@ $('btn-reset').addEventListener('click', () => {
     b.classList.toggle('active', i === 0));
   $('range-input').classList.remove('visible');
   $('range-input').value = '';
+  $('watermark-input').value = '';
 });
 
 document.querySelectorAll('input[name="format"]').forEach(input => {
@@ -831,6 +856,59 @@ function formatRange(pages) {
   }
   groups.push(start === prev ? '' + start : start + '-' + prev);
   return groups.join(', ');
+}
+
+/* ─── Watermark ─── */
+function getWatermarkText() {
+  return $('watermark-input').value.trim();
+}
+
+function applyWatermarkToCanvas(canvas, text) {
+  if (!text) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+
+  let fontSize = Math.max(40, Math.floor(Math.min(w, h) / 8));
+  if (text.length > 6) fontSize = Math.max(28, Math.floor(fontSize * 6 / text.length));
+
+  ctx.save();
+  ctx.font = 'bold ' + fontSize + 'px "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif';
+  ctx.fillStyle = 'rgba(80, 80, 80, 0.22)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.translate(w / 2, h / 2);
+  ctx.rotate(-Math.PI / 6);
+  ctx.fillText(text, 0, 0);
+  ctx.restore();
+}
+
+async function makeWatermarkPng(text) {
+  // Render rotated watermark text to a PNG so pdf-lib can embed it
+  // (avoids needing a CJK-capable embedded font in pdf-lib)
+  let fontSize = 200;
+  if (text.length > 6) fontSize = Math.max(80, Math.floor(fontSize * 6 / text.length));
+
+  const measure = document.createElement('canvas').getContext('2d');
+  const fontStr = 'bold ' + fontSize + 'px "Noto Sans TC", "PingFang TC", sans-serif';
+  measure.font = fontStr;
+  const textWidth = measure.measureText(text).width;
+
+  const size = Math.ceil(Math.max(textWidth, fontSize) * 1.5);
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.font = fontStr;
+  ctx.fillStyle = 'rgba(80, 80, 80, 0.30)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.translate(size / 2, size / 2);
+  ctx.rotate(-Math.PI / 6);
+  ctx.fillText(text, 0, 0);
+
+  const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
 async function renderThumbnails() {
@@ -914,6 +992,8 @@ async function processSplit() {
     const total = pages.length * (state.format === 'both' ? 2 : 1);
     let done = 0;
     const baseName = state.file.name.replace(/\.pdf$/i, '');
+    const wmText = getWatermarkText();
+    const wmPngBytes = wmText ? await makeWatermarkPng(wmText) : null;
 
     if (state.format === 'jpg' || state.format === 'both') {
       for (const p of pages) {
@@ -923,6 +1003,7 @@ async function processSplit() {
         const canvas = document.createElement('canvas');
         canvas.width = viewport.width; canvas.height = viewport.height;
         await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        applyWatermarkToCanvas(canvas, wmText);
         const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.92));
         const folder = state.format === 'both' ? zip.folder('jpg') : zip;
         folder.file(baseName + '_p' + String(p).padStart(3, '0') + '.jpg', blob);
@@ -939,6 +1020,22 @@ async function processSplit() {
         const newPdf = await PDFLib.PDFDocument.create();
         const [copied] = await newPdf.copyPages(sourcePdf, [p - 1]);
         newPdf.addPage(copied);
+
+        if (wmPngBytes) {
+          const targetPage = newPdf.getPage(0);
+          const { width, height } = targetPage.getSize();
+          const wmImage = await newPdf.embedPng(wmPngBytes);
+          const scale = Math.min(width, height) * 0.75 / wmImage.width;
+          const wmW = wmImage.width * scale;
+          const wmH = wmImage.height * scale;
+          targetPage.drawImage(wmImage, {
+            x: (width - wmW) / 2,
+            y: (height - wmH) / 2,
+            width: wmW,
+            height: wmH,
+          });
+        }
+
         const bytes = await newPdf.save();
         const folder = state.format === 'both' ? zip.folder('pdf') : zip;
         folder.file(baseName + '_p' + String(p).padStart(3, '0') + '.pdf', bytes);
