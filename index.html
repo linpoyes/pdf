@@ -176,6 +176,49 @@ h1 .t-zh {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ─── Mode tabs ─── */
+.mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 48px;
+  padding: 6px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.mode-tab {
+  background: transparent;
+  border: none;
+  padding: 14px 16px;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 2px;
+  transition: all .15s;
+  font-family: 'Noto Sans TC', sans-serif;
+}
+.mode-tab:hover { background: var(--paper); }
+.mode-tab.active { background: var(--ink); color: var(--paper); }
+.mode-tab .tab-title {
+  display: block;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: .02em;
+  margin-bottom: 2px;
+}
+.mode-tab .tab-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: .03em;
+}
+.mode-tab.active .tab-sub { color: rgba(246,244,238,.6); }
+
+/* watermark mode hides format section */
+body.mode-watermark .format-section { display: none; }
+body.mode-watermark .controls { grid-template-columns: 1fr; }
+body.mode-watermark .watermark-section .section-label .meta { color: var(--accent); font-weight: 500; }
+
 /* ─── File info bar ─── */
 .file-info {
   display: flex;
@@ -599,8 +642,19 @@ footer {
       <button class="btn-reset" id="btn-reset">回主頁</button>
     </div>
 
+    <div class="mode-tabs">
+      <button class="mode-tab active" data-mode="split">
+        <span class="tab-title">拆分頁面</span>
+        <span class="tab-sub">每頁輸出單獨檔案</span>
+      </button>
+      <button class="mode-tab" data-mode="watermark">
+        <span class="tab-title">加浮水印</span>
+        <span class="tab-sub">輸出整份 PDF · 不拆分</span>
+      </button>
+    </div>
+
     <div class="controls">
-      <div class="section" style="margin-bottom: 0;">
+      <div class="section format-section" style="margin-bottom: 0;">
         <div class="section-label">
           <span class="num">01</span>
           <span class="name">輸出格式</span>
@@ -674,7 +728,7 @@ footer {
 
     <div class="execute-row">
       <div class="execute-summary" id="summary"></div>
-      <button class="btn-execute" id="btn-process">開始拆分</button>
+      <button class="btn-execute" id="btn-process"><span id="btn-process-text">開始拆分</span></button>
     </div>
 
   </div>
@@ -702,6 +756,7 @@ let state = {
   arrayBuffer: null,
   pdfJsDoc: null,
   pageCount: 0,
+  mode: 'split',
   format: 'jpg',
   jpgScale: 2.5,
   rangeMode: 'all',
@@ -769,7 +824,7 @@ async function handleFile(file) {
 $('btn-reset').addEventListener('click', () => {
   state = {
     file: null, arrayBuffer: null, pdfJsDoc: null, pageCount: 0,
-    format: 'jpg', jpgScale: 2.5, rangeMode: 'all', selectedPages: []
+    mode: 'split', format: 'jpg', jpgScale: 2.5, rangeMode: 'all', selectedPages: []
   };
   fileInput.value = '';
   dropFrame.style.display = 'block';
@@ -781,9 +836,25 @@ $('btn-reset').addEventListener('click', () => {
     b.classList.toggle('active', i === 1));
   document.querySelectorAll('.range-mode').forEach((b, i) =>
     b.classList.toggle('active', i === 0));
+  document.querySelectorAll('.mode-tab').forEach((b, i) =>
+    b.classList.toggle('active', i === 0));
+  document.body.classList.remove('mode-watermark');
+  $('btn-process-text').textContent = '開始拆分';
   $('range-input').classList.remove('visible');
   $('range-input').value = '';
   $('watermark-input').value = '';
+});
+
+/* ─── Mode switch ─── */
+document.querySelectorAll('.mode-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.mode = btn.dataset.mode;
+    document.body.classList.toggle('mode-watermark', state.mode === 'watermark');
+    $('btn-process-text').textContent = state.mode === 'watermark' ? '加上浮水印' : '開始拆分';
+    updateSummary();
+  });
 });
 
 document.querySelectorAll('input[name="format"]').forEach(input => {
@@ -824,6 +895,8 @@ $('range-input').addEventListener('input', e => {
   refreshThumbSelection();
   updateSummary();
 });
+
+$('watermark-input').addEventListener('input', updateSummary);
 
 function parseRange(str, max) {
   if (!str.trim()) return [];
@@ -967,12 +1040,29 @@ function refreshThumbSelection() {
 function updateSummary() {
   const n = state.selectedPages.length;
   $('selected-count').textContent = '已選 ' + n + ' / ' + state.pageCount;
+
+  if (state.mode === 'watermark') {
+    const wm = $('watermark-input').value.trim();
+    if (!wm) {
+      $('summary').innerHTML = '請輸入浮水印文字<span class="hint">於下方「浮水印」欄位</span>';
+      $('btn-process').disabled = true;
+    } else {
+      $('summary').innerHTML = '輸出 <strong>1 個 PDF</strong> · 於 <strong>' + n + ' 頁</strong>蓋上浮水印<span class="hint">文字：' + escapeHtml(wm) + '</span>';
+      $('btn-process').disabled = n === 0;
+    }
+    return;
+  }
+
   let formatText = '';
   if (state.format === 'jpg') formatText = n + ' 張 JPG';
   else if (state.format === 'pdf') formatText = n + ' 個 PDF';
   else formatText = n + ' 張 JPG ＋ ' + n + ' 個 PDF';
   $('summary').innerHTML = '將輸出 <strong>' + formatText + '</strong><span class="hint">打包為 .zip 自動下載</span>';
   $('btn-process').disabled = n === 0;
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 $('btn-process').addEventListener('click', processSplit);
@@ -986,6 +1076,62 @@ async function processSplit() {
   overlay.classList.add('active');
   bar.style.width = '0%'; pct.textContent = '0%';
 
+  /* ─── Watermark-only mode: single PDF output ─── */
+  if (state.mode === 'watermark') {
+    try {
+      const wmText = getWatermarkText();
+      if (!wmText) {
+        overlay.classList.remove('active');
+        showError('請輸入浮水印文字');
+        return;
+      }
+      const baseName = state.file.name.replace(/\.pdf$/i, '');
+      const wmPngBytes = await makeWatermarkPng(wmText);
+      const sourcePdf = await PDFLib.PDFDocument.load(state.arrayBuffer.slice(0));
+      const wmImage = await sourcePdf.embedPng(wmPngBytes);
+      const targetSet = new Set(state.selectedPages);
+      const total = sourcePdf.getPageCount();
+
+      for (let i = 0; i < total; i++) {
+        status.textContent = '處理第 ' + (i + 1) + ' / ' + total + ' 頁';
+        if (targetSet.has(i + 1)) {
+          const pg = sourcePdf.getPage(i);
+          const { width, height } = pg.getSize();
+          const scale = Math.min(width, height) * 0.75 / wmImage.width;
+          const wmW = wmImage.width * scale;
+          const wmH = wmImage.height * scale;
+          pg.drawImage(wmImage, {
+            x: (width - wmW) / 2,
+            y: (height - wmH) / 2,
+            width: wmW,
+            height: wmH,
+          });
+        }
+        const percent = Math.round((i + 1) / total * 100);
+        bar.style.width = percent + '%'; pct.textContent = percent + '%';
+      }
+
+      status.textContent = '產生 PDF 中...';
+      const bytes = await sourcePdf.save();
+      const blob = new Blob([bytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = baseName + '_watermarked.pdf';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      status.textContent = '完成！檔案開始下載';
+      bar.style.width = '100%'; pct.textContent = '100%';
+      setTimeout(() => overlay.classList.remove('active'), 900);
+    } catch (err) {
+      overlay.classList.remove('active');
+      showError('處理失敗：' + (err.message || err));
+    }
+    return;
+  }
+
+  /* ─── Split mode (original) ─── */
   try {
     const zip = new JSZip();
     const pages = state.selectedPages;
